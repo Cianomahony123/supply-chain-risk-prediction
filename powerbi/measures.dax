@@ -1,0 +1,117 @@
+// ============================================================
+// DAX Measures — Supply Chain Disruption Risk
+// Paste each block into Power BI Desktop > New Measure
+// Target table: Shipments (unless noted)
+// ============================================================
+
+// ── Core counts ─────────────────────────────────────────────
+
+Total Shipments =
+COUNTROWS(Shipments)
+
+Total Disruptions =
+CALCULATE(
+    COUNTROWS(Shipments),
+    Shipments[Disruption_Occurred] = 1
+)
+
+On-Time Shipments =
+CALCULATE(
+    COUNTROWS(Shipments),
+    Shipments[Disruption_Occurred] = 0
+)
+
+// ── Disruption rate ──────────────────────────────────────────
+
+Disruption Rate % =
+DIVIDE([Total Disruptions], [Total Shipments], 0) * 100
+
+Disruption Rate Label =
+FORMAT([Disruption Rate %], "0.0") & "%"
+
+// ── Lead time ────────────────────────────────────────────────
+
+Avg Lead Time (All) =
+AVERAGE(Shipments[Lead_Time_Days])
+
+Avg Lead Time (Disrupted) =
+CALCULATE(
+    AVERAGE(Shipments[Lead_Time_Days]),
+    Shipments[Disruption_Occurred] = 1
+)
+
+Avg Lead Time (On-Time) =
+CALCULATE(
+    AVERAGE(Shipments[Lead_Time_Days]),
+    Shipments[Disruption_Occurred] = 0
+)
+
+Lead Time Delta =
+[Avg Lead Time (Disrupted)] - [Avg Lead Time (On-Time)]
+
+// ── Risk exposure ────────────────────────────────────────────
+
+Avg Geopolitical Risk =
+AVERAGE(Shipments[Geopolitical_Risk_Score])
+
+Avg Fuel Price Index =
+AVERAGE(Shipments[Fuel_Price_Index])
+
+High Risk Shipments =
+CALCULATE(
+    COUNTROWS(Shipments),
+    Shipments[Risk_Tier] = "High"
+)
+
+High Risk Disruption Rate % =
+DIVIDE(
+    CALCULATE([Total Disruptions], Shipments[Risk_Tier] = "High"),
+    CALCULATE([Total Shipments],   Shipments[Risk_Tier] = "High"),
+    0
+) * 100
+
+// ── Model comparison (from Model_Comparison table) ───────────
+
+SVM Recall =
+CALCULATE(
+    MAX(Model_Comparison[Recall_Minority]),
+    Model_Comparison[Model] = "Balanced SVM (RBF)"
+)
+
+MLP Accuracy =
+CALCULATE(
+    MAX(Model_Comparison[Accuracy_%]),
+    Model_Comparison[Model] = "MLP Neural Network"
+)
+
+Recall Lift vs MLP =
+VAR SVMRecall = [SVM Recall]
+VAR MLPRecall =
+    CALCULATE(
+        MAX(Model_Comparison[Recall_Minority]),
+        Model_Comparison[Model] = "MLP Neural Network"
+    )
+RETURN
+FORMAT((SVMRecall - MLPRecall) / MLPRecall * 100, "0.0") & "% recall lift (SVM vs MLP)"
+
+// ── Dynamic titles ───────────────────────────────────────────
+
+Selected Mode Title =
+VAR sel = SELECTEDVALUE(Shipments[Transport_Mode], "All Modes")
+RETURN "Disruption Rate — " & sel
+
+Worst Route =
+VAR top1 =
+    TOPN(
+        1,
+        SUMMARIZE(
+            Shipments,
+            Shipments[Origin_Port],
+            Shipments[Destination_Port],
+            "dr", DIVIDE(SUM(Shipments[Disruption_Occurred]), COUNTROWS(Shipments))
+        ),
+        [dr], DESC
+    )
+RETURN
+CONCATENATEX(top1,
+    Shipments[Origin_Port] & " → " & Shipments[Destination_Port])
